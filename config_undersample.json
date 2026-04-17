@@ -1,0 +1,10 @@
+{
+    "seed": 42,
+    "input_file": "news_data.xlsx",
+    "output_file": "undersampled_dataset.xlsx",
+
+    "sheet_names": {
+        "HR": "HR",
+        "HF": "HF"
+    }
+}
