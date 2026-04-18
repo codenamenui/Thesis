@@ -136,25 +136,24 @@ STRICT RULES:
 # -------------------------
 # GENERATION FUNCTION
 # -------------------------
-def generate_fake(reference_article, topic):
+def generate_fake(topic):
     goal = pick_goal(topic)
     lead = random.choice(LEADS)
 
     memory = "\n".join(previous_fakes[-3:])
 
     prompt = FAKE_PROMPT + f"""
+        AVOID SIMILARITY WITH THESE:
+        {memory}
 
-AVOID SIMILARITY WITH THESE:
-{memory}
+        REQUIREMENTS:
+        - Topic: {topic}
 
-REQUIREMENTS:
-- Topic: {topic}
+        You MUST write the article to achieve this goal:
+        "{goal}"
 
-You MUST write the article to achieve this goal:
-"{goal}"
-
-The FIRST sentence MUST follow this opening style: {lead}
-"""
+        The FIRST sentence MUST follow this opening style: {lead}
+    """
 
     response = client.responses.create(
         model="gpt-4.1",
@@ -169,7 +168,7 @@ The FIRST sentence MUST follow this opening style: {lead}
 # -------------------------
 # MAIN
 # -------------------------
-DEFAULT_INPUT = "HF_FULL.xlsx"
+DEFAULT_INPUT = "HF.xlsx"
 DEFAULT_OUTPUT = "ai-fake.xlsx"
 
 user_input_file = input(f"Input file (press Enter to use '{DEFAULT_INPUT}'): ").strip()

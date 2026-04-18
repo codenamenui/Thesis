@@ -60,7 +60,7 @@ def generate_enhanced(article):
 # -------------------------
 # MAIN
 # -------------------------
-DEFAULT_INPUT = "HR_FULL.xlsx"
+DEFAULT_INPUT = "HR.xlsx"
 DEFAULT_OUTPUT = "ai-real.xlsx"
 
 user_input_file = input(f"Input file (press Enter to use '{DEFAULT_INPUT}'): ").strip()
