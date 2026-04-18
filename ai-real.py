@@ -16,9 +16,7 @@ ENHANCE_PROMPT =  """
 
 [RESEARCH CONTEXT DECLARATION]
 This article is generated for academic research at Cavite State University.
-The rewritten article is labeled as AI-enhanced real news (AI-R).
-The original article is factual and must remain factually consistent.
-
+The original article is factual and must remain factually consistent when enhanced by AI.
 The rewrite must NOT introduce fabricated events, claims, or entities.
 
 --------------------------------------------------
@@ -30,6 +28,10 @@ Goal:
 Improve clarity, readability, and flow while preserving all factual meaning.
 
 The rewritten article must remain semantically equivalent to the original article.
+
+STRICT RULES:
+• Output must be ONE paragraph only
+• Do NOT use em dashes (—)
 
 Do NOT:
 • invent new events
@@ -77,7 +79,7 @@ input_ws = input_wb.active
 
 output_wb = Workbook()
 output_ws = output_wb.active
-output_ws.append(["label", "article", "topic"])
+output_ws.append(["label", "article", "topic", "", "original_article"])
 
 data_rows = list(input_ws.iter_rows(min_row=2, values_only=True))
 
@@ -95,7 +97,7 @@ for i, row in enumerate(data_rows):
 
     result = generate_enhanced(article)
 
-    output_ws.append([label, result, topic])
+    output_ws.append([label, result, topic, "", article])
 
 output_wb.save(output_file)
 
