@@ -1,7 +1,8 @@
 """
 undersample.py
 --------------
-Produces a single Excel workbook with one sheet containing balanced HR and HF data.
+Produces a single Excel workbook with one sheet containing balanced HR and HF data,
+plus a Summary sheet with counts and percentages for every breakdown.
 
 Undersampling logic:
   For each topic, find the minimum row count between HR and HF sheets.
@@ -11,8 +12,8 @@ Undersampling logic:
     - HR and HF are balanced against each other
 
 Split logic (applied after undersampling):
-  - test  : 15% of total_samples, 50:50 HR:HF — FIXED
-  - val   : 15% of total_samples, 50:50 HR:HF — FIXED
+  - test  : 15% of total_samples, 50:50 HR:HF — FIXED (sampled once, never changes)
+  - val   : 15% of total_samples, 50:50 HR:HF — FIXED (sampled once, never changes)
   - train : 70% of total_samples, 50:50 HR:HF
 
 Usage:
@@ -26,7 +27,8 @@ import pathlib
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 
 # ── config loading ────────────────────────────────────────────────────────────
@@ -125,14 +127,26 @@ def undersample_sheet(
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=df.columns)
 
 
-# ── Excel writing ─────────────────────────────────────────────────────────────
+# ── Excel styles ──────────────────────────────────────────────────────────────
 
 COL_ORDER  = ["label", "article", "topic", "news_type", "split"]
 COL_WIDTHS = {"label": 8, "article": 80, "topic": 28, "news_type": 12, "split": 10}
 
-HEADER_FILL = PatternFill("solid", start_color="1F4E79")
-HEADER_FONT = Font(name="Arial", bold=True, color="FFFFFF", size=11)
-DATA_FONT   = Font(name="Arial", size=10)
+HEADER_FILL    = PatternFill("solid", start_color="1F4E79")   # dark navy
+HEADER_FONT    = Font(name="Arial", bold=True, color="FFFFFF", size=11)
+
+SECTION_FILL   = PatternFill("solid", start_color="1F4E79")   # same navy for section titles
+SECTION_FONT   = Font(name="Arial", bold=True, color="FFFFFF", size=12)
+
+SUBHDR_FILL    = PatternFill("solid", start_color="2E75B6")   # medium blue for table headers
+SUBHDR_FONT    = Font(name="Arial", bold=True, color="FFFFFF", size=10)
+
+TOTAL_FILL     = PatternFill("solid", start_color="D6DCE4")   # light grey for totals
+TOTAL_FONT     = Font(name="Arial", bold=True, size=10)
+
+EVEN_FILL      = PatternFill("solid", start_color="EEF3FB")   # very light blue
+ODD_FILL       = PatternFill("solid", start_color="FFFFFF")
+DATA_FONT      = Font(name="Arial", size=10)
 
 SPLIT_COLORS = {
     "train": "E2EFDA",   # soft green
@@ -140,19 +154,27 @@ SPLIT_COLORS = {
     "test":  "FCE4D6",   # soft orange
 }
 
+THIN_BORDER = Border(
+    bottom=Side(style="thin", color="B8CCE4"),
+    top=Side(style="thin",    color="B8CCE4"),
+)
 
-def write_sheet(ws, df: pd.DataFrame) -> None:
+CENTER = Alignment(horizontal="center", vertical="center")
+LEFT   = Alignment(horizontal="left",   vertical="center")
+
+
+# ── data sheet writer ─────────────────────────────────────────────────────────
+
+def write_data_sheet(ws, df: pd.DataFrame) -> None:
     cols = [c for c in COL_ORDER if c in df.columns]
     df   = df[cols]
 
-    # header row
     for ci, col in enumerate(cols, 1):
         cell = ws.cell(row=1, column=ci, value=col.upper())
         cell.font      = HEADER_FONT
         cell.fill      = HEADER_FILL
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.alignment = CENTER
 
-    # data rows
     for ri, row in enumerate(df.itertuples(index=False), 2):
         split_val = getattr(row, "split", "train")
         row_fill  = PatternFill("solid", start_color=SPLIT_COLORS.get(split_val, "FFFFFF"))
@@ -165,11 +187,214 @@ def write_sheet(ws, df: pd.DataFrame) -> None:
             )
 
     for ci, col in enumerate(cols, 1):
-        ws.column_dimensions[ws.cell(row=1, column=ci).column_letter].width = \
-            COL_WIDTHS.get(col, 15)
+        ws.column_dimensions[get_column_letter(ci)].width = COL_WIDTHS.get(col, 15)
 
     ws.row_dimensions[1].height = 22
     ws.freeze_panes = "A2"
+
+
+# ── summary sheet writer ──────────────────────────────────────────────────────
+
+def _cell(ws, row, col, value, font=None, fill=None, alignment=None, number_format=None):
+    c = ws.cell(row=row, column=col, value=value)
+    if font:        c.font        = font
+    if fill:        c.fill        = fill
+    if alignment:   c.alignment   = alignment
+    if number_format: c.number_format = number_format
+    return c
+
+
+def _section_title(ws, row, col, title, n_cols):
+    """Write a wide section-title cell spanning n_cols columns."""
+    c = _cell(ws, row, col, title, font=SECTION_FONT, fill=SECTION_FILL, alignment=LEFT)
+    ws.merge_cells(
+        start_row=row, start_column=col,
+        end_row=row,   end_column=col + n_cols - 1
+    )
+    ws.row_dimensions[row].height = 20
+    return row + 1
+
+
+def _table_headers(ws, row, col, headers):
+    for i, h in enumerate(headers):
+        _cell(ws, row, col + i, h, font=SUBHDR_FONT, fill=SUBHDR_FILL, alignment=CENTER)
+    ws.row_dimensions[row].height = 18
+    return row + 1
+
+
+def _data_row(ws, row, col, values, even=True, bold=False, fill_override=None):
+    fill = fill_override or (EVEN_FILL if even else ODD_FILL)
+    fnt  = Font(name="Arial", bold=bold, size=10)
+    for i, v in enumerate(values):
+        align = LEFT if i == 0 else CENTER
+        fmt   = "0.0%" if isinstance(v, float) and 0 <= v <= 1 else None
+        _cell(ws, row, col + i, v, font=fnt, fill=fill, alignment=align,
+              number_format=fmt)
+    return row + 1
+
+
+def write_summary_sheet(
+    ws,
+    combined: pd.DataFrame,
+    frames_raw: dict[str, pd.DataFrame],   # original counts before undersampling
+    caps: dict[str, int],
+) -> None:
+    """
+    Writes 5 summary tables to ws:
+      1. Dataset Overview
+      2. Split Breakdown (train / val / test)
+      3. News-Type Breakdown by Split
+      4. Topic Breakdown by Split
+      5. Pre- vs Post-Undersampling per Topic
+    """
+
+    # column widths
+    ws.column_dimensions["A"].width = 32
+    ws.column_dimensions["B"].width = 14
+    ws.column_dimensions["C"].width = 14
+    ws.column_dimensions["D"].width = 14
+    ws.column_dimensions["E"].width = 14
+    ws.column_dimensions["F"].width = 14
+    ws.column_dimensions["G"].width = 14
+
+    total = len(combined)
+    splits     = ["train", "val", "test"]
+    news_types = sorted(combined["news_type"].unique())
+    topics     = sorted(combined["topic"].unique())
+
+    ROW = 1  # current write row
+
+    # ── 1. OVERVIEW ───────────────────────────────────────────────────────────
+    ROW = _section_title(ws, ROW, 1, "1 · Dataset Overview", 4)
+    ROW = _table_headers(ws, ROW, 1, ["Metric", "Value"])
+
+    overview_rows = [
+        ("Total rows (final)", total),
+        ("  Train rows",       len(combined[combined["split"] == "train"])),
+        ("  Val rows",         len(combined[combined["split"] == "val"])),
+        ("  Test rows",        len(combined[combined["split"] == "test"])),
+        ("News types",         ", ".join(news_types)),
+        ("Unique topics",      len(topics)),
+        ("Split ratio",        "70 / 15 / 15  (train / val / test)"),
+        ("Val & test fixed?",  "YES — sampled once with fixed seed; identical across any re-run"),
+    ]
+    for i, (k, v) in enumerate(overview_rows):
+        ROW = _data_row(ws, ROW, 1, [k, v], even=(i % 2 == 0))
+
+    ROW += 1  # blank separator
+
+    # ── 2. SPLIT BREAKDOWN ────────────────────────────────────────────────────
+    ROW = _section_title(ws, ROW, 1, "2 · Split Breakdown", 3)
+    ROW = _table_headers(ws, ROW, 1, ["Split", "Count", "% of Total"])
+
+    for i, split in enumerate(splits):
+        n = len(combined[combined["split"] == split])
+        ROW = _data_row(ws, ROW, 1, [split, n, n / total], even=(i % 2 == 0))
+
+    ROW = _data_row(ws, ROW, 1, ["TOTAL", total, 1.0],
+                    bold=True, fill_override=TOTAL_FILL)
+    ROW += 1
+
+    # ── 3. NEWS-TYPE BREAKDOWN BY SPLIT ───────────────────────────────────────
+    ROW = _section_title(ws, ROW, 1, "3 · News-Type Breakdown by Split", 5)
+    ROW = _table_headers(ws, ROW, 1, ["News Type", "Train", "Train %", "Val", "Val %",
+                                       "Test", "Test %", "Total", "Total %"])
+    ws.column_dimensions["H"].width = 12
+    ws.column_dimensions["I"].width = 12
+
+    grand_total = total
+    i = 0
+    for nt in news_types:
+        row_vals = [nt]
+        nt_total = 0
+        for split in splits:
+            n = len(combined[(combined["news_type"] == nt) & (combined["split"] == split)])
+            split_total = len(combined[combined["split"] == split])
+            row_vals += [n, n / split_total]
+            nt_total += n
+        row_vals += [nt_total, nt_total / grand_total]
+        ROW = _data_row(ws, ROW, 1, row_vals, even=(i % 2 == 0))
+        i += 1
+
+    # totals row
+    totals_row = ["TOTAL"]
+    for split in splits:
+        s_total = len(combined[combined["split"] == split])
+        totals_row += [s_total, 1.0]
+    totals_row += [grand_total, 1.0]
+    ROW = _data_row(ws, ROW, 1, totals_row, bold=True, fill_override=TOTAL_FILL)
+    ROW += 1
+
+    # ── 4. TOPIC BREAKDOWN BY SPLIT ───────────────────────────────────────────
+    ROW = _section_title(ws, ROW, 1, "4 · Topic Breakdown by Split", 9)
+    ROW = _table_headers(ws, ROW, 1, ["Topic", "Train", "Train %", "Val", "Val %",
+                                       "Test", "Test %", "Total", "Total %"])
+
+    i = 0
+    topic_totals = []
+    for topic in topics:
+        row_vals = [topic]
+        t_total  = 0
+        for split in splits:
+            n = len(combined[(combined["topic"] == topic) & (combined["split"] == split)])
+            split_total = len(combined[combined["split"] == split])
+            row_vals += [n, n / split_total]
+            t_total  += n
+        row_vals += [t_total, t_total / grand_total]
+        topic_totals.append(t_total)
+        ROW = _data_row(ws, ROW, 1, row_vals, even=(i % 2 == 0))
+        i += 1
+
+    totals_row = ["TOTAL"]
+    for split in splits:
+        s_total = len(combined[combined["split"] == split])
+        totals_row += [s_total, 1.0]
+    totals_row += [grand_total, 1.0]
+    ROW = _data_row(ws, ROW, 1, totals_row, bold=True, fill_override=TOTAL_FILL)
+    ROW += 1
+
+    # ── 5. PRE vs POST UNDERSAMPLING ──────────────────────────────────────────
+    all_news_types = sorted(frames_raw.keys())
+    hdr = ["Topic"]
+    for nt in all_news_types:
+        hdr += [f"{nt} Before", f"{nt} After", f"{nt} Dropped"]
+    hdr += ["Cap (per type)"]
+
+    ROW = _section_title(ws, ROW, 1,
+        "5 · Pre- vs Post-Undersampling Topic Counts (per news type)", len(hdr))
+    ROW = _table_headers(ws, ROW, 1, hdr)
+
+    # extend column widths for extra cols
+    for ci in range(2, len(hdr) + 2):
+        col_letter = get_column_letter(ci)
+        if ws.column_dimensions[col_letter].width < 14:
+            ws.column_dimensions[col_letter].width = 14
+
+    i = 0
+    for topic in topics:
+        cap = caps.get(topic, 0)
+        row_vals = [topic]
+        for nt in all_news_types:
+            before = len(frames_raw[nt][frames_raw[nt]["topic"] == topic])
+            after  = cap   # same cap applied to every news type
+            dropped = before - after
+            row_vals += [before, after, dropped]
+        row_vals.append(cap)
+        ROW = _data_row(ws, ROW, 1, row_vals, even=(i % 2 == 0))
+        i += 1
+
+    # grand totals row
+    grand_vals = ["TOTAL"]
+    for nt in all_news_types:
+        before_total = sum(
+            len(frames_raw[nt][frames_raw[nt]["topic"] == t]) for t in topics
+        )
+        after_total  = sum(caps.get(t, 0) for t in topics)
+        grand_vals  += [before_total, after_total, before_total - after_total]
+    grand_vals.append(sum(caps.get(t, 0) for t in topics))
+    ROW = _data_row(ws, ROW, 1, grand_vals, bold=True, fill_override=TOTAL_FILL)
+
+    ws.freeze_panes = "B1"
 
 
 # ── split allocation ──────────────────────────────────────────────────────────
@@ -209,28 +434,20 @@ def main(config_path: str) -> None:
     print(f"  Total rows                         : {total_rows}")
     print(f"  Split  → train={n_train}  val={n_val}  test={n_test}\n")
 
-    # Per-sheet split sizes (equal across news types)
-    tr_per, vl_per, te_per = split_counts(total_per_sheet)
-
     # ── fixed test + val (sampled once, reused) ───────────────────────────────
     print("Sampling fixed test / val sets …")
     rng_fixed = np.random.default_rng(seed)
     used: dict[str, set] = {nt: set() for nt in frames}
 
-    # For test / val we use the same per-topic caps scaled to the split size.
-    # We derive per-topic counts proportional to the cap weights.
-    cap_total = sum(caps.values())
-    def scale_caps(caps: dict, n: int) -> dict[str, int]:
-        """Scale topic caps to sum to n using largest-remainder."""
-        raw    = {t: c / cap_total * n for t, c in caps.items()}
-        floors = {t: int(v) for t, v in raw.items()}
-        deficit = n - sum(floors.values())
-        for t in sorted(raw, key=lambda t: raw[t] - floors[t], reverse=True)[:deficit]:
-            floors[t] += 1
-        return floors
-
-    test_caps  = scale_caps(caps, te_per)
-    val_caps   = scale_caps(caps, vl_per)
+    # Split each topic's cap directly: train+val+test == cap per topic exactly.
+    # Calling scale_caps three times independently causes rounding loss per topic
+    # (e.g. disaster cap=36 → 5+5+25=35 instead of 36).
+    test_caps, val_caps, train_caps = {}, {}, {}
+    for topic, cap in caps.items():
+        tr, vl, te        = split_counts(cap)
+        train_caps[topic] = tr
+        val_caps[topic]   = vl
+        test_caps[topic]  = te
 
     test_parts, val_parts = [], []
 
@@ -260,8 +477,7 @@ def main(config_path: str) -> None:
 
     # ── training set ──────────────────────────────────────────────────────────
     print("Sampling training set …")
-    train_caps  = scale_caps(caps, tr_per)
-    rng_train   = np.random.default_rng(seed + 999)
+    rng_train = np.random.default_rng(seed + 999)
     train_parts = []
 
     for news_type in frames:
@@ -293,12 +509,16 @@ def main(config_path: str) -> None:
 
     wb = Workbook()
     wb.remove(wb.active)
-    ws = wb.create_sheet(title="HR-HF-Undersampled")
-    write_sheet(ws, combined)
+
+    ws_data = wb.create_sheet(title="HR-HF-Undersampled")
+    write_data_sheet(ws_data, combined)
+
+    ws_sum = wb.create_sheet(title="Summary")
+    write_summary_sheet(ws_sum, combined, frames, caps)
 
     out_path = pathlib.Path(output_file)
     wb.save(str(out_path))
-    print(f"\n✅  Saved → {out_path}")
+    print(f"\n✅  Saved → {out_path}  (sheets: 'HR-HF-Undersampled', 'Summary')")
 
 
 if __name__ == "__main__":
