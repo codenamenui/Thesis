@@ -201,7 +201,7 @@ for i, row in enumerate(data_rows):
     ref_article = row[1]
     topic = row[2].strip().lower()
 
-    result = generate_fake(ref_article, topic)
+    result = generate_fake(topic)
 
     output_ws.append([label, result, topic])
 
