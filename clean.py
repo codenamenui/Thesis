@@ -14,6 +14,7 @@ Usage:
 
 import re
 import sys
+import html
 import pathlib
 import pandas as pd
 from openpyxl import Workbook
@@ -24,14 +25,37 @@ from openpyxl.utils import get_column_letter
 # ── cleaning ──────────────────────────────────────────────────────────────────
 
 # Matches "Source:" (or "Sources:") and everything after it until end of string.
-# Handles variations like "Source: 1 | 2 | 3", "Source: CNN Philippines", etc.
-_RE_SOURCE = re.compile(r"\s*Sources?\s*:.*$", re.IGNORECASE | re.DOTALL)
+_RE_SOURCE   = re.compile(r"\s*Sources?\s*:.*$", re.IGNORECASE | re.DOTALL)
+_RE_MULTI_SP = re.compile(r"[ \t]+")       # consecutive spaces / tabs → one space
+_RE_MULTI_NL = re.compile(r"\n{3,}")       # 3+ blank lines → 2
 
 
 def clean_article(text: str) -> str:
     if not isinstance(text, str):
         return text
+
+    # 1. HTML entity decoding  (&amp; → &,  &nbsp; → space, &#39; → ', etc.)
+    text = html.unescape(text)
+
+    # 2. Normalize Unicode spaces
+    text = text.replace("\u00a0", " ")   # non-breaking space
+    text = text.replace("\u200b", "")    # zero-width space
+    text = text.replace("\u2009", " ")   # thin space
+    text = text.replace("\u202f", " ")   # narrow no-break space
+
+    # 3. Collapse consecutive spaces / tabs into a single space
+    text = _RE_MULTI_SP.sub(" ", text)
+
+    # 4. Collapse 3+ consecutive newlines into 2
+    text = _RE_MULTI_NL.sub("\n\n", text)
+
+    # 5. Strip leading / trailing whitespace per line
+    text = "\n".join(line.strip() for line in text.splitlines())
+
+    # 6. Remove trailing "Source: ..." attribution
     text = _RE_SOURCE.sub("", text)
+
+    # 7. Final strip
     return text.strip()
 
 
