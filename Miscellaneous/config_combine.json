@@ -1,0 +1,15 @@
+{
+	"output_file": "Miscellaneous\\combined.xlsx",
+	"sources": [
+		{
+			"folder": "AI Dataset Generation\\AI-F",
+			"news_type": "AI-F",
+			"exclude": ["AI-F Generation.xlsx"]
+		},
+		{
+			"folder": "AI Dataset Generation\\AI-R",
+			"news_type": "AI-R",
+			"exclude": ["AI-R Generation.xlsx", "HR_cleaned.xlsx"]
+		}
+	]
+}

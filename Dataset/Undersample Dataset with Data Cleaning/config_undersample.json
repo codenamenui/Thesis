@@ -1,0 +1,11 @@
+{
+	"seed": 42,
+	"clean": true,
+	"input_file": "Dataset\\news_data.xlsx",
+	"output_file": "Dataset\\Undersample Dataset with Data Cleaning\\undersampled_dataset.xlsx",
+
+	"sheet_names": {
+		"HR": "HR",
+		"HF": "HF"
+	}
+}

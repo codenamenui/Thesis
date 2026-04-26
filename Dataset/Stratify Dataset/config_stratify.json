@@ -1,0 +1,118 @@
+{
+	"seed": 42,
+	"input_file": "news_articles.xlsx",
+	"output_file": "Dataset\\Stratify Dataset\\stratified_dataset.xlsx",
+	"total_samples": 2166,
+	"sheet_names": {
+		"HR": "HR",
+		"HF": "HF",
+		"AI-F": "AI-F",
+		"AI-R": "AI-R"
+	},
+	"topic_ratios": {
+		"politics": 0.278,
+		"crime": 0.19,
+		"celebrity / entertainment": 0.184,
+		"economy / business": 0.073,
+		"disaster / environment": 0.033,
+		"international news": 0.072,
+		"lifestyle / human interest": 0.054,
+		"religion": 0.043,
+		"education": 0.031,
+		"health misinformation": 0.018,
+		"technology": 0.017,
+		"sports": 0.007
+	},
+	"news_type_ratios": [
+		{
+			"HR": 0.0,
+			"HF": 0.0,
+			"AI-F": 0.5,
+			"AI-R": 0.5
+		},
+		{
+			"HR": 0.0,
+			"HF": 0.165,
+			"AI-F": 0.335,
+			"AI-R": 0.5
+		},
+		{
+			"HR": 0.0,
+			"HF": 0.25,
+			"AI-F": 0.25,
+			"AI-R": 0.5
+		},
+		{
+			"HR": 0.0,
+			"HF": 0.335,
+			"AI-F": 0.165,
+			"AI-R": 0.5
+		},
+		{
+			"HR": 0.0,
+			"HF": 0.5,
+			"AI-F": 0.0,
+			"AI-R": 0.5
+		},
+		{
+			"HR": 0.165,
+			"HF": 0.0,
+			"AI-F": 0.5,
+			"AI-R": 0.335
+		},
+		{
+			"HR": 0.165,
+			"HF": 0.165,
+			"AI-F": 0.335,
+			"AI-R": 0.335
+		},
+		{
+			"HR": 0.165,
+			"HF": 0.25,
+			"AI-F": 0.25,
+			"AI-R": 0.335
+		},
+		{
+			"HR": 0.165,
+			"HF": 0.335,
+			"AI-F": 0.165,
+			"AI-R": 0.335
+		},
+		{
+			"HR": 0.165,
+			"HF": 0.5,
+			"AI-F": 0.0,
+			"AI-R": 0.335
+		},
+		{
+			"HR": 0.25,
+			"HF": 0.0,
+			"AI-F": 0.5,
+			"AI-R": 0.25
+		},
+		{
+			"HR": 0.25,
+			"HF": 0.165,
+			"AI-F": 0.335,
+			"AI-R": 0.25
+		},
+		{
+			"HR": 0.25,
+			"HF": 0.25,
+			"AI-F": 0.25,
+			"AI-R": 0.25
+		},
+		{
+			"HR": 0.25,
+			"HF": 0.335,
+			"AI-F": 0.165,
+			"AI-R": 0.25
+		},
+		{
+			"HR": 0.25,
+			"HF": 0.5,
+			"AI-F": 0.0,
+			"AI-R": 0.25
+		}
+	]
+}
