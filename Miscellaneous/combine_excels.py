@@ -14,17 +14,28 @@ Example config (config_combine.json):
     {
         "output_file": "combined.xlsx",
         "sources": [
-            { "folder": "AI-F", "news_type": "HF", "exclude": ["AI-F Generation.xlsx"] },
-            { "folder": "AI-R", "news_type": "HR", "exclude": ["AI-R Generation.xlsx"] }
+            {
+                "folder": "AI-F",
+                "news_type": "HF",
+                "exclude": ["AI-F Generation.xlsx"]
+            },
+            {
+                "folder": "AI-R",
+                "news_type": "HR",
+                "exclude": ["AI-R Generation.xlsx"],
+                "extra_cols": ["original_article"]
+            }
         ]
     }
 
 Config keys:
     output_file  (optional) default: combined.xlsx
     sources      (required) list of source groups:
-        folder      (required) path to folder containing .xlsx files
-        news_type   (required) label written into the news_type column (e.g. HF, HR)
-        exclude     (optional) list of filenames to skip within the folder
+        folder       (required) path to folder containing .xlsx files
+        news_type    (required) label written into the news_type column (e.g. HF, HR)
+        exclude      (optional) list of filenames to skip within the folder
+        extra_cols   (optional) list of additional columns to keep (e.g. ["original_article"])
+                     Columns that are missing in a file are silently filled with NaN.
 """
 
 import json
@@ -55,7 +66,12 @@ def load_config(path: str) -> dict:
 
 REQUIRED_COLS = {"label", "article", "topic"}
 
-def read_source(folder: str, news_type: str, exclude: list[str]) -> pd.DataFrame:
+def read_source(
+    folder: str,
+    news_type: str,
+    exclude: list[str],
+    extra_cols: list[str],
+) -> pd.DataFrame:
     folder_path = pathlib.Path(folder)
     if not folder_path.exists():
         raise FileNotFoundError(f"Folder not found: {folder_path.resolve()}")
@@ -79,12 +95,25 @@ def read_source(folder: str, news_type: str, exclude: list[str]) -> pd.DataFrame
         df = pd.read_excel(xlsx_path)
         df.columns = df.columns.str.strip().str.lower()
 
-        missing = REQUIRED_COLS - set(df.columns)
-        if missing:
-            print(f"  [SKIP] {xlsx_path.name} — missing columns: {missing}")
+        missing_required = REQUIRED_COLS - set(df.columns)
+        if missing_required:
+            print(f"  [SKIP] {xlsx_path.name} — missing columns: {missing_required}")
             continue
 
-        df = df[["label", "article", "topic"]].copy()
+        # Always include required columns
+        cols_to_keep = ["label", "article", "topic"]
+
+        # Include extra columns if requested; fill with NaN if absent in this file
+        for col in extra_cols:
+            col_lower = col.strip().lower()
+            if col_lower in df.columns:
+                cols_to_keep.append(col_lower)
+            else:
+                df[col_lower] = pd.NA
+                cols_to_keep.append(col_lower)
+                print(f"  [WARN] {xlsx_path.name} — '{col_lower}' not found, filled with NaN")
+
+        df = df[cols_to_keep].copy()
         df["news_type"] = news_type
         parts.append(df)
         print(f"  [OK]   {xlsx_path.name:40s}  {len(df):>5} rows")
@@ -95,13 +124,21 @@ def read_source(folder: str, news_type: str, exclude: list[str]) -> pd.DataFrame
     combined = pd.concat(parts, ignore_index=True)
     combined["topic"]   = combined["topic"].str.strip().str.lower()
     combined["article"] = combined["article"].astype(str).str.strip()
+    if "original_article" in combined.columns:
+        combined["original_article"] = combined["original_article"].astype(str).str.strip()
     return combined
 
 
 # ── Excel writing ─────────────────────────────────────────────────────────────
 
-COL_ORDER  = ["label", "article", "topic", "news_type"]
-COL_WIDTHS = {"label": 8, "article": 80, "topic": 28, "news_type": 12}
+BASE_COL_ORDER  = ["label", "article", "original_article", "topic", "news_type"]
+COL_WIDTHS = {
+    "label":            8,
+    "article":         80,
+    "original_article": 80,
+    "topic":           28,
+    "news_type":       12,
+}
 
 HEADER_FILL = PatternFill("solid", start_color="1F4E79")
 HEADER_FONT = Font(name="Arial", bold=True, color="FFFFFF", size=11)
@@ -111,7 +148,9 @@ ODD_FILL    = PatternFill("solid", start_color="FFFFFF")
 
 
 def write_sheet(ws, df: pd.DataFrame) -> None:
-    cols = [c for c in COL_ORDER if c in df.columns]
+    # Only include columns that actually exist in this sheet's data,
+    # respecting the canonical column order.
+    cols = [c for c in BASE_COL_ORDER if c in df.columns]
     df   = df[cols]
 
     for ci, col in enumerate(cols, 1):
@@ -120,6 +159,8 @@ def write_sheet(ws, df: pd.DataFrame) -> None:
         cell.fill      = HEADER_FILL
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
+    wrap_cols = {"article", "original_article"}
+
     for ri, row in enumerate(df.itertuples(index=False), 2):
         fill = EVEN_FILL if ri % 2 == 0 else ODD_FILL
         for ci, val in enumerate(row, 1):
@@ -127,7 +168,7 @@ def write_sheet(ws, df: pd.DataFrame) -> None:
             cell.font      = DATA_FONT
             cell.fill      = fill
             cell.alignment = Alignment(
-                wrap_text=(cols[ci - 1] == "article"), vertical="top"
+                wrap_text=(cols[ci - 1] in wrap_cols), vertical="top"
             )
 
     for ci, col in enumerate(cols, 1):
@@ -143,7 +184,9 @@ def print_summary(frames: dict[str, pd.DataFrame]) -> None:
     print("\n── Summary ──────────────────────────────────────────")
     total = 0
     for news_type, df in frames.items():
-        print(f"\n  {news_type}  ({len(df)} rows)")
+        extra = [c for c in df.columns if c not in {*REQUIRED_COLS, "news_type"}]
+        extra_note = f"  [extra: {', '.join(extra)}]" if extra else ""
+        print(f"\n  {news_type}  ({len(df)} rows){extra_note}")
         for topic, grp in df.groupby("topic"):
             print(f"    {topic:<30} {len(grp):>5} rows")
         total += len(df)
@@ -163,12 +206,14 @@ def main(config_path: str) -> None:
     frames: dict[str, pd.DataFrame] = {}
 
     for source in sources:
-        folder    = source["folder"]
-        news_type = source["news_type"]
-        exclude   = source.get("exclude", [])
+        folder     = source["folder"]
+        news_type  = source["news_type"]
+        exclude    = source.get("exclude", [])
+        extra_cols = [c.strip().lower() for c in source.get("extra_cols", [])]
 
-        print(f"📂  {folder}  →  news_type='{news_type}'")
-        df = read_source(folder, news_type, exclude)
+        extra_note = f"  extra_cols={extra_cols}" if extra_cols else ""
+        print(f"📂  {folder}  →  news_type='{news_type}'{extra_note}")
+        df = read_source(folder, news_type, exclude, extra_cols)
         frames[news_type] = df
         print(f"       Loaded {len(df)} rows\n")
 

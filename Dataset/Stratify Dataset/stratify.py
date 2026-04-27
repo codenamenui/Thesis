@@ -68,7 +68,8 @@ def load_config(path: str) -> dict:
 # ── data loading ──────────────────────────────────────────────────────────────
 
 def _prep_df(df: pd.DataFrame, news_type: str, source_label: str) -> pd.DataFrame:
-    """Normalise columns, validate, add news_type and _idx."""
+    """Normalise columns, validate, add news_type and _idx.
+    Extra columns (e.g. original_article) are preserved as-is."""
     df = df.copy()
     df.columns = df.columns.str.strip().str.lower()
 
@@ -206,8 +207,18 @@ def sheet_label(type_ratios: dict[str, float]) -> str:
 
 # ── Excel writing ─────────────────────────────────────────────────────────────
 
-COL_ORDER   = ["label", "article", "topic", "news_type", "split"]
-COL_WIDTHS  = {"label": 8, "article": 80, "topic": 20, "news_type": 12, "split": 10}
+# original_article sits between article and topic; write_sheet filters to
+# only columns that are actually present in the dataframe, so this is a no-op
+# for workbooks that don't carry the column.
+COL_ORDER  = ["label", "article", "original_article", "topic", "news_type", "split"]
+COL_WIDTHS = {
+    "label":            8,
+    "article":         80,
+    "original_article": 80,
+    "topic":           20,
+    "news_type":       12,
+    "split":           10,
+}
 
 HEADER_FILL  = PatternFill("solid", start_color="1F4E79")
 HEADER_FONT  = Font(name="Arial", bold=True, color="FFFFFF", size=11)
@@ -235,8 +246,12 @@ NEWS_TYPE_COLORS = {
 
 
 def write_sheet(ws, df: pd.DataFrame) -> None:
+    # Only include columns present in this dataframe, in canonical order.
+    # original_article is included automatically when it exists.
     cols = [c for c in COL_ORDER if c in df.columns]
     df   = df[cols]
+
+    wrap_cols = {"article", "original_article"}
 
     for ci, col in enumerate(cols, 1):
         cell = ws.cell(row=1, column=ci, value=col.upper())
@@ -252,7 +267,7 @@ def write_sheet(ws, df: pd.DataFrame) -> None:
             cell.font      = DATA_FONT
             cell.fill      = row_fill
             cell.alignment = Alignment(
-                wrap_text=(cols[ci - 1] == "article"), vertical="top"
+                wrap_text=(cols[ci - 1] in wrap_cols), vertical="top"
             )
 
     for ci, col in enumerate(cols, 1):

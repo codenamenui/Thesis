@@ -9,7 +9,8 @@
 		{
 			"folder": "AI Dataset Generation\\AI-R",
 			"news_type": "AI-R",
-			"exclude": ["AI-R Generation.xlsx", "HR_cleaned.xlsx"]
+			"exclude": ["AI-R Generation.xlsx", "HR_cleaned.xlsx"],
+			"extra_cols": ["original_article"]
 		}
 	]
 }
