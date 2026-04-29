@@ -1,0 +1,101 @@
+========================================================================
+  MERGE REPORT — Filipino Fake News HPO Pipeline
+  Generated : 2026-04-29 05:59:20
+========================================================================
+
+  Sources merged : 15
+    • 1                     xlsx=✓  json=✓  csv=✗
+    • 10                    xlsx=✓  json=✓  csv=✗
+    • 11                    xlsx=✓  json=✓  csv=✓
+    • 12                    xlsx=✓  json=✓  csv=✓
+    • 13                    xlsx=✓  json=✓  csv=✗
+    • 14                    xlsx=✓  json=✓  csv=✓
+    • 15                    xlsx=✓  json=✓  csv=✓
+    • 2                     xlsx=✓  json=✓  csv=✗
+    • 3                     xlsx=✓  json=✓  csv=✗
+    • 4                     xlsx=✓  json=✓  csv=✓
+    • 5                     xlsx=✓  json=✓  csv=✗
+    • 6                     xlsx=✓  json=✓  csv=✗
+    • 7                     xlsx=✓  json=✓  csv=✗
+    • 8                     xlsx=✓  json=✓  csv=✗
+    • 9                     xlsx=✓  json=✓  csv=✗
+
+────────────────────────────────────────────────────────────────────────
+  MERGED SHEET SIZES
+────────────────────────────────────────────────────────────────────────
+    Summary                  :    120 rows
+    Subclass_Matrix          :     30 rows
+    Predictions              :  29250 rows
+    Statistical_Tests        :     25 rows
+
+────────────────────────────────────────────────────────────────────────
+  EFFECTIVE MODELS (for stats)
+────────────────────────────────────────────────────────────────────────
+    bert__HR0-AIR100-HF100-AIF0__13                               325 test samples
+    bert__HR100-AIR0-HF100-AIF0__15                               325 test samples
+    bert__HR100-AIR0-HF33-AIF67__11                               325 test samples
+    bert__HR100-AIR0-HF50-AIF50__12                               325 test samples
+    bert__HR100-AIR0-HF67-AIF33__14                               325 test samples
+    bert__HR50-AIR50-HF0-AIF100__5                                325 test samples
+    bert__HR50-AIR50-HF100-AIF0__8                                325 test samples
+    bert__HR50-AIR50-HF100-AIF0__9                                325 test samples
+    bert__HR50-AIR50-HF33-AIF67__5                                325 test samples
+    bert__HR50-AIR50-HF50-AIF50__7                                325 test samples
+    bert__HR67-AIR33-HF0-AIF100__3                                325 test samples
+    bert__HR67-AIR33-HF100-AIF0__10                               325 test samples
+    bert__HR67-AIR33-HF33-AIF67__1                                325 test samples
+    bert__HR67-AIR33-HF50-AIF50__1                                325 test samples
+    bert__HR67-AIR33-HF67-AIF33__2                                325 test samples
+    distilbert__HR100-AIR0-HF0-AIF100__13                         325 test samples
+    distilbert__HR100-AIR0-HF100-AIF0__15                         325 test samples
+    distilbert__HR100-AIR0-HF33-AIF67__11                         325 test samples
+    distilbert__HR100-AIR0-HF50-AIF50__12                         325 test samples
+    distilbert__HR100-AIR0-HF67-AIF33__14                         325 test samples
+    distilbert__HR50-AIR50-HF0-AIF100__6                          325 test samples
+    distilbert__HR50-AIR50-HF100-AIF0__8                          325 test samples
+    distilbert__HR50-AIR50-HF100-AIF0__9                          325 test samples
+    distilbert__HR50-AIR50-HF33-AIF67__6                          325 test samples
+    distilbert__HR50-AIR50-HF50-AIF50__7                          325 test samples
+    distilbert__HR67-AIR33-HF0-AIF100__4                          325 test samples
+    distilbert__HR67-AIR33-HF100-AIF0__10                         325 test samples
+    distilbert__HR67-AIR33-HF33-AIF67__4                          325 test samples
+    distilbert__HR67-AIR33-HF50-AIF50__4                          325 test samples
+    distilbert__HR67-AIR33-HF67-AIF33__3                          325 test samples
+
+────────────────────────────────────────────────────────────────────────
+  STATISTICAL TESTS  (McNemar + Benjamini-Hochberg)
+  α = 0.05
+────────────────────────────────────────────────────────────────────────
+  Total pairs tested       : 2175
+  Significant              : 1172
+  Overall pairs            : 435  (309 significant)
+  HR                        : 140/435 significant
+  AI-R                      : 228/435 significant
+  HF                        : 300/435 significant
+  AI-F                      : 195/435 significant
+
+  Top significant pairs:
+  Scope      p_adj_bh   Model pair
+  ──────────────────────────────────────────────────────────────────────────────────────────
+  overall    0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR50-AIR50-HF33-AIF67__5
+  AI-F       0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR100-AIR0-HF67-AIF33__14
+  HF         0.000000   distilbert__HR67-AIR33-HF0-AIF100__4  ↔  distilbert__HR67-AIR33-HF100-AIF0__10
+  AI-F       0.000000   distilbert__HR67-AIR33-HF0-AIF100__4  ↔  distilbert__HR67-AIR33-HF100-AIF0__10
+  overall    0.000000   distilbert__HR50-AIR50-HF100-AIF0__9  ↔  distilbert__HR67-AIR33-HF50-AIF50__4
+  AI-F       0.000000   distilbert__HR50-AIR50-HF100-AIF0__9  ↔  distilbert__HR67-AIR33-HF33-AIF67__4
+  overall    0.000000   distilbert__HR50-AIR50-HF100-AIF0__9  ↔  distilbert__HR67-AIR33-HF33-AIF67__4
+  AI-F       0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  distilbert__HR100-AIR0-HF100-AIF0__15
+  AI-F       0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR50-AIR50-HF33-AIF67__5
+  overall    0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR67-AIR33-HF33-AIF67__1
+  AI-F       0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR67-AIR33-HF100-AIF0__10
+  AI-F       0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR67-AIR33-HF0-AIF100__3
+  HF         0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR67-AIR33-HF0-AIF100__3
+  AI-F       0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR50-AIR50-HF50-AIF50__7
+  AI-F       0.000000   distilbert__HR50-AIR50-HF100-AIF0__9  ↔  distilbert__HR67-AIR33-HF67-AIF33__3
+  overall    0.000000   distilbert__HR50-AIR50-HF100-AIF0__9  ↔  distilbert__HR67-AIR33-HF67-AIF33__3
+  HF         0.000000   distilbert__HR67-AIR33-HF0-AIF100__4  ↔  distilbert__HR67-AIR33-HF33-AIF67__4
+  overall    0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR100-AIR0-HF100-AIF0__15
+  overall    0.000000   distilbert__HR67-AIR33-HF100-AIF0__10  ↔  distilbert__HR67-AIR33-HF50-AIF50__4
+  overall    0.000000   bert__HR0-AIR100-HF100-AIF0__13  ↔  bert__HR100-AIR0-HF67-AIF33__14
+
+========================================================================
