@@ -113,11 +113,17 @@ def run_sheet(sheet_name: str, df: pd.DataFrame) -> dict:
     val_df   = df[df["split"] == "val"].reset_index(drop=True)
     test_df  = df[df["split"] == "test"].reset_index(drop=True)
 
+    if len(train_df) == 0:
+        raise ValueError(f"Sheet '{sheet_name}' has no train rows.")
+    if len(test_df) == 0:
+        raise ValueError(f"Sheet '{sheet_name}' has no test rows.")
+
     clf = LogisticRegression(random_state=42, max_iter=1000)
     clf.fit(train_df[["token_count"]], train_df["label"])
 
     train_m = evaluate(clf, train_df)
-    val_m   = evaluate(clf, val_df)
+    # val is optional — fall back to a copy of test metrics if absent
+    val_m   = evaluate(clf, val_df) if len(val_df) > 0 else evaluate(clf, test_df)
     test_m  = evaluate(clf, test_df)
 
     # Token stats per news_type (if available)

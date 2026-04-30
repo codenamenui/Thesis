@@ -3,6 +3,9 @@
 	"input_file": "news_articles.xlsx",
 	"output_file": "Dataset\\Stratify Dataset\\stratified_dataset.xlsx",
 	"total_samples": 2166,
+	"truncation": {
+		"model": "jcblaise/bert-tagalog-base-cased"
+	},
 	"sheet_names": {
 		"HR": "HR",
 		"HF": "HF",
