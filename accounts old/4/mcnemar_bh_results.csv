@@ -1,0 +1,6 @@
+scope,model_1,model_2,b,c,p_raw,p_adj_bh,significant
+overall,distilbert__HR67-AIR33-HF0-AIF100,distilbert__HR67-AIR33-HF33-AIF67,8,48,0.0,0.0,True
+HR,distilbert__HR67-AIR33-HF0-AIF100,distilbert__HR67-AIR33-HF33-AIF67,2,0,0.5,0.833333,False
+AI-R,distilbert__HR67-AIR33-HF0-AIF100,distilbert__HR67-AIR33-HF33-AIF67,4,2,0.6875,0.859375,False
+HF,distilbert__HR67-AIR33-HF0-AIF100,distilbert__HR67-AIR33-HF33-AIF67,0,45,0.0,0.0,True
+AI-F,distilbert__HR67-AIR33-HF0-AIF100,distilbert__HR67-AIR33-HF33-AIF67,2,1,1.0,1.0,False

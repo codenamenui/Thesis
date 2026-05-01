@@ -1,0 +1,6 @@
+scope,model_1,model_2,b,c,p_raw,p_adj_bh,significant
+overall,bert__HR100-AIR0-HF50-AIF50,distilbert__HR100-AIR0-HF50-AIF50,37,7,1.2e-05,6.2e-05,True
+HR,bert__HR100-AIR0-HF50-AIF50,distilbert__HR100-AIR0-HF50-AIF50,7,0,0.015625,0.026042,True
+AI-R,bert__HR100-AIR0-HF50-AIF50,distilbert__HR100-AIR0-HF50-AIF50,26,3,4.4e-05,0.00011,True
+HF,bert__HR100-AIR0-HF50-AIF50,distilbert__HR100-AIR0-HF50-AIF50,4,4,1.0,1.0,False
+AI-F,bert__HR100-AIR0-HF50-AIF50,distilbert__HR100-AIR0-HF50-AIF50,0,0,1.0,1.0,False

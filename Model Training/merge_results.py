@@ -4,22 +4,32 @@ merge_results_comprehensive_final.py
 =============================================================================
 THE COMPLETE UNABRIDGED THESIS ANALYTICS ENGINE
 =============================================================================
-This script provides the full statistical and visual breakdown for 
-Filipino Fake News Detection models.
+Filipino Fake News Detection — Full Statistical & Visual Pipeline.
 
-CONTAINS:
-- Full Binary Metrics (Precision, Recall, F1, Accuracy) per model.
-- Subclass Accuracy breakdown (HR, AI-R, HF, AI-F) per model.
-- McNemar Pairwise Statistical Significance with BH Correction.
-- Academic Minimalist Table Styling (Arial).
-- RdYlGn (Red-to-Green) Synchronized Visualizations.
+OUTPUT FILES
+------------
+Thesis_Results_Final_Comprehensive.xlsx
+    {CondKey}_Overall    — Binary metrics per model
+    {CondKey}_Subclass   — Per-subclass accuracy
+    {CondKey}_Stats      — Within-condition McNemar (same arch, vary HF:AIF)
+    CrossCondition_Stats — Cross-condition McNemar (same arch+HF, vary HR:AIR)
+
+Thesis_Champion_Comparison.xlsx
+    Champion_Comparisons — Post-hoc top-3 per (condition × architecture)
+
+MCNEMAR SORT ORDER (all three tables)
+--------------------------------------
+Primary   : Architecture  — Tagalog BERT (0) before Tagalog DistilBERT (1)
+Secondary : HF% of left model  — descending numeric  (100 → 75 → 50 → 25 → 0)
+Tertiary  : HF% of right model — descending numeric
+Quaternary: Condition pair or accuracy pair (where applicable)
 """
 
 import argparse
 import os
 import re
 import warnings
-from typing import Dict, List, Tuple
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -28,13 +38,11 @@ import matplotlib.ticker as mticker
 import seaborn as sns
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score
 
-# Set global plotting parameters for academic publication
-plt.rcParams['figure.dpi'] = 300
-plt.rcParams['savefig.dpi'] = 300
-plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['figure.dpi']      = 300
+plt.rcParams['savefig.dpi']     = 300
+plt.rcParams['font.family']     = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['Arial']
 
-# Suppress warnings to keep thesis logs clean
 warnings.filterwarnings("ignore")
 
 # =============================================================================
@@ -42,182 +50,359 @@ warnings.filterwarnings("ignore")
 # =============================================================================
 
 SUBCLASSES = ["HR", "AI-R", "HF", "AI-F"]
+
 CONDITIONS = {
     "Condition_A": "HR100",
     "Condition_B": "HR67",
-    "Condition_C": "HR50"
+    "Condition_C": "HR50",
 }
 CONDITION_LABELS = {
     "Condition_A": "Condition A: Human-Real 100%",
     "Condition_B": "Condition B: Human-Real 67%",
     "Condition_C": "Condition C: Human-Real 50%",
 }
+CONDITION_SHORT = {
+    "Condition_A": "CondA",
+    "Condition_B": "CondB",
+    "Condition_C": "CondC",
+}
+# Canonical display order for conditions (used as sort index)
+CONDITION_ORDER = {v: i for i, v in enumerate(CONDITION_SHORT.values())}
+# Canonical display order for architectures (Tagalog BERT first)
+ARCH_ORDER = {"Tagalog BERT": 0, "Tagalog DistilBERT": 1}
+
 LABEL_STR_TO_INT = {"real": 0, "fake": 1}
 
 # =============================================================================
-# 2. LOGICAL SORTING ENGINE
+# 2. LABEL HELPERS
 # =============================================================================
 
-def compute_logical_sort_key(model_identifier: str) -> Tuple:
+def extract_architecture(model_key: str) -> str:
+    """Returns 'Tagalog DistilBERT' or 'Tagalog BERT'."""
+    return "Tagalog DistilBERT" if "distilbert" in model_key.lower() else "Tagalog BERT"
+
+
+def extract_hf_label(model_key: str) -> str:
+    """Returns 'HF{n}-AIF{m}', inferring AIF = 100 - HF when absent."""
+    key   = model_key.lower()
+    hf_m  = re.search(r'hf(\d+)',  key)
+    aif_m = re.search(r'aif(\d+)', key)
+    hf    = int(hf_m.group(1))  if hf_m  else 0
+    aif   = int(aif_m.group(1)) if aif_m else (100 - hf)
+    return f"HF{hf}-AIF{aif}"
+
+
+def extract_hf_pct(model_key_or_hf_label: str) -> int:
     """
-    Ensures models are grouped by architecture (BERT then DistilBERT)
-    and then by training data composition (HF Ratio descending).
+    Extracts the numeric HF percentage from either a model key or an
+    HF label string such as 'HF75-AIF25'.  Returns 0 if not found.
+    Used exclusively for *sort keys* — never shown to the user.
     """
-    mid_lower = str(model_identifier).lower()
-    
-    # 1. Architecture priority
-    if "distilbert" in mid_lower:
-        architecture_weight = 1
-    else:
-        architecture_weight = 0
-        
-    # 2. Training data composition priority (HF100 > HF75 > HF50...)
-    hf_match = re.search(r'hf(\d+)', mid_lower)
-    if hf_match:
-        hf_composition_ratio = int(hf_match.group(1))
-    else:
-        hf_composition_ratio = 0
-        
-    return (architecture_weight, -hf_composition_ratio)
+    m = re.search(r'hf(\d+)', model_key_or_hf_label, re.IGNORECASE)
+    return int(m.group(1)) if m else 0
 
 
 def format_model_display_label(model_key: str) -> str:
     """
-    Converts a raw model key into a human-readable publication label.
-
-    Examples
-    --------
-    "bert-HR67-HF100" -> "Tagalog BERT: HR67-AIR33-HF100-AIF0"
-    "distilbert-HR50-HF75" -> "Tagalog DistilBERT: HR50-AIR50-HF75-AIF25"
-
-    The function infers missing ratio values so that all four components
-    (HR, AIR, HF, AIF) always sum correctly.
+    Full publication label.
+    e.g. "bert-HR67-HF100" -> "Tagalog BERT: HR67-AIR33-HF100-AIF0"
     """
-    key_lower = model_key.lower()
+    key  = model_key.lower()
+    arch = "Tagalog DistilBERT" if "distilbert" in key else "Tagalog BERT"
 
-    # --- Architecture ---
-    if "distilbert" in key_lower:
-        arch_label = "Tagalog DistilBERT"
-    else:
-        arch_label = "Tagalog BERT"
-
-    # --- Extract numeric ratios (default to None if absent) ---
-    def _extract(pattern, text):
-        m = re.search(pattern, text, re.IGNORECASE)
+    def _get(pattern):
+        m = re.search(pattern, key, re.IGNORECASE)
         return int(m.group(1)) if m else None
 
-    hr  = _extract(r'hr(\d+)',  key_lower)
-    air = _extract(r'air(\d+)', key_lower)
-    hf  = _extract(r'hf(\d+)',  key_lower)
-    aif = _extract(r'aif(\d+)', key_lower)
+    hr  = _get(r'(?<!ai)hr(\d+)')
+    air = _get(r'air(\d+)')
+    hf  = _get(r'hf(\d+)')
+    aif = _get(r'aif(\d+)')
 
-    # Infer missing complements (assumes pairs sum to 100)
-    if hr is not None and air is None:
-        air = 100 - hr
-    elif air is not None and hr is None:
-        hr = 100 - air
+    if hr  is not None and air is None: air = 100 - hr
+    elif air is not None and hr is None: hr  = 100 - air
+    if hf  is not None and aif is None: aif = 100 - hf
+    elif aif is not None and hf is None: hf  = 100 - aif
 
-    if hf is not None and aif is None:
-        aif = 100 - hf
-    elif aif is not None and hf is None:
-        hf = 100 - aif
+    hr  = hr  or 0
+    air = air or 0
+    hf  = hf  or 0
+    aif = aif or 0
 
-    # Fallback to 0 if still unresolved
-    hr  = hr  if hr  is not None else 0
-    air = air if air is not None else 0
-    hf  = hf  if hf  is not None else 0
-    aif = aif if aif is not None else 0
-
-    composition = f"HR{hr}-AIR{air}-HF{hf}-AIF{aif}"
-    return f"{arch_label}: {composition}"
+    return f"HR{hr}-AIR{air}-HF{hf}-AIF{aif}"
 
 
-def standardize_and_sort_thesis_data(dataframe: pd.DataFrame) -> pd.DataFrame:
-    """Standardizes architecture labels and applies the logical thesis sort."""
-    if dataframe.empty:
-        return dataframe
+def compute_logical_sort_key(model_identifier: str) -> Tuple:
+    """Tagalog BERT before Tagalog DistilBERT; HF ratio descending within each arch."""
+    mid   = model_identifier.lower()
+    arch  = 1 if "distilbert" in mid else 0
+    hf_m  = re.search(r'hf(\d+)', mid)
+    hf    = int(hf_m.group(1)) if hf_m else 0
+    return (arch, -hf)
+
+
+def standardize_and_sort_thesis_data(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    if 'Model Identifier' in df.columns:
+        # 1. Compute sort key FIRST using the raw key (to detect architecture)
+        df['_sort_key'] = df['Model Identifier'].apply(compute_logical_sort_key)
         
-    # Standardize Architecture labels (no hyphens)
-    if 'Architecture' in dataframe.columns:
-        dataframe['Architecture'] = dataframe['Architecture'].replace({
-            'BERT':       'Tagalog BERT',
-            'DISTILBERT': 'Tagalog DistilBERT',
-            'bert':       'Tagalog BERT',
-            'distilbert': 'Tagalog DistilBERT',
-            # also handle legacy hyphenated variants
-            'Tagalog-BERT':       'Tagalog BERT',
-            'Tagalog-DistilBERT': 'Tagalog DistilBERT',
-        })
-
-    # Apply formatted display labels to Model Identifier
-    if 'Model Identifier' in dataframe.columns:
-        dataframe['Model Identifier'] = dataframe['Model Identifier'].apply(
-            format_model_display_label
-        )
-
-    # Sort the dataframe using our logic (operates on the new label string)
-    if 'Model Identifier' in dataframe.columns:
-        dataframe['_sort_key'] = dataframe['Model Identifier'].apply(compute_logical_sort_key)
-        dataframe = dataframe.sort_values(by='_sort_key').drop(columns=['_sort_key'])
+        # 2. Format the display label SECOND (removing the prefix)
+        df['Model Identifier'] = df['Model Identifier'].apply(format_model_display_label)
         
-    return dataframe
+        # 3. Sort by the hidden key and then drop it
+        df = df.sort_values('_sort_key').drop(columns=['_sort_key'])
+    return df
 
 # =============================================================================
-# 3. STATISTICAL ENGINE (MCNEMAR + BH CORRECTION)
+# 3. SHARED MCNEMAR HELPERS
 # =============================================================================
 
-def run_mcnemar_significance_test(condition_dataframe: pd.DataFrame) -> pd.DataFrame:
-    """
-    Performs pairwise McNemar tests to evaluate if model performance 
-    differences are statistically significant.
-    """
-    from statsmodels.stats.multitest import multipletests
+def _run_mcnemar_pair(res_1: pd.DataFrame, res_2: pd.DataFrame):
+    """Single McNemar test between two result DataFrames. Returns p-value or None."""
     from statsmodels.stats.contingency_tables import mcnemar
-    
-    unique_model_list = condition_dataframe['model_key'].unique()
-    pairwise_stats_list = []
-    
-    for i in range(len(unique_model_list)):
-        for j in range(i + 1, len(unique_model_list)):
-            model_1_name = unique_model_list[i]
-            model_2_name = unique_model_list[j]
-            
-            # Synchronize results by sample index
-            res_1 = condition_dataframe[condition_dataframe['model_key'] == model_1_name].sort_values('sample_index')
-            res_2 = condition_dataframe[condition_dataframe['model_key'] == model_2_name].sort_values('sample_index')
-            
-            common_count = min(len(res_1), len(res_2))
-            ground_truth = res_1['true_int'].values[:common_count]
-            pred_m1 = res_1['pred_int'].values[:common_count]
-            pred_m2 = res_2['pred_int'].values[:common_count]
-            
-            # Contingency table values
-            b_count = np.sum((pred_m1 == ground_truth) & (pred_m2 != ground_truth))
-            c_count = np.sum((pred_m1 != ground_truth) & (pred_m2 == ground_truth))
-            
-            contingency_matrix = [[0, b_count], [c_count, 0]]
-            mcnemar_result = mcnemar(contingency_matrix, exact=(b_count + c_count < 25))
-            
-            pairwise_stats_list.append({
-                "Comparison": f"{format_model_display_label(model_1_name)} vs {format_model_display_label(model_2_name)}",
-                "Discordant_M1": b_count,
-                "Discordant_M2": c_count,
-                "p-value": mcnemar_result.pvalue
-            })
-            
-    if not pairwise_stats_list:
-        return pd.DataFrame()
-        
-    stat_df = pd.DataFrame(pairwise_stats_list)
-    
-    _, p_adj, _, _ = multipletests(stat_df['p-value'], alpha=0.05, method='fdr_bh')
-    stat_df['p-adj (BH)'] = p_adj
-    stat_df['Significant'] = p_adj < 0.05
-    
-    return stat_df
+
+    n = min(len(res_1), len(res_2))
+    if n == 0:
+        return None
+
+    gt = res_1['true_int'].values[:n]
+    p1 = res_1['pred_int'].values[:n]
+    p2 = res_2['pred_int'].values[:n]
+
+    b = int(np.sum((p1 == gt) & (p2 != gt)))
+    c = int(np.sum((p1 != gt) & (p2 == gt)))
+
+    return mcnemar([[0, b], [c, 0]], exact=(b + c < 25)).pvalue
+
+
+def _apply_bh(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds BH-corrected p-values and significance flag. Does NOT sort."""
+    from statsmodels.stats.multitest import multipletests
+
+    if df.empty:
+        return df
+    _, p_adj, _, _ = multipletests(df['p-value'], alpha=0.05, method='fdr_bh')
+    df = df.copy()
+    df['p-adj (BH)']  = np.round(p_adj, 4)
+    df['Significant'] = p_adj < 0.05
+    return df
+
+
+def _arch_sort_val(arch_str: str) -> int:
+    """Tagalog BERT → 0, Tagalog DistilBERT → 1."""
+    return 0 if "distilbert" not in arch_str.lower() else 1
 
 # =============================================================================
-# 4. ACADEMIC VISUALIZATION (HEATMAPS & RDYLGN BARS)
+# 4. WITHIN-CONDITION MCNEMAR
+# =============================================================================
+
+def run_within_condition_mcnemar(condition_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Same architecture, same HR:AIR (fixed by condition) -> all HF:AIF pairs.
+    Cross-architecture pairs are excluded.
+
+    Sort order
+    ----------
+    1. Architecture  : Tagalog BERT first, Tagalog DistilBERT second
+    2. HF% of left model  : descending (100 → 75 → 50 → 25 → 0)
+    3. HF% of right model : descending
+    """
+    models = condition_df['model_key'].unique()
+    rows   = []
+
+    for i in range(len(models)):
+        for j in range(i + 1, len(models)):
+            m1, m2 = models[i], models[j]
+            if extract_architecture(m1) != extract_architecture(m2):
+                continue
+
+            res_1 = condition_df[condition_df['model_key'] == m1].sort_values('sample_index')
+            res_2 = condition_df[condition_df['model_key'] == m2].sort_values('sample_index')
+
+            pval = _run_mcnemar_pair(res_1, res_2)
+            if pval is None:
+                continue
+
+            hf_label_1 = extract_hf_label(m1)
+            hf_label_2 = extract_hf_label(m2)
+
+            # Always put the higher-HF model on the left side of "vs"
+            if extract_hf_pct(hf_label_1) < extract_hf_pct(hf_label_2):
+                hf_label_1, hf_label_2 = hf_label_2, hf_label_1
+
+            rows.append({
+                "Architecture":  extract_architecture(m1),
+                "Comparison":    f"{hf_label_1} vs {hf_label_2}",
+                "p-value":       round(pval, 4),
+                # Numeric sort keys (dropped before returning)
+                "_arch_order":   _arch_sort_val(extract_architecture(m1)),
+                "_hf_left":      -extract_hf_pct(hf_label_1),   # negative → descending
+                "_hf_right":     -extract_hf_pct(hf_label_2),
+            })
+
+    out = _apply_bh(pd.DataFrame(rows))
+    if out.empty:
+        return out
+
+    out = (out
+           .sort_values(["_arch_order", "_hf_left", "_hf_right"])
+           .drop(columns=["_arch_order", "_hf_left", "_hf_right"])
+           .reset_index(drop=True))
+    return out
+
+# =============================================================================
+# 5. CROSS-CONDITION MCNEMAR
+# =============================================================================
+
+def run_cross_condition_mcnemar(total_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Same architecture + HF:AIF -> all condition pairs (A<->B, A<->C, B<->C).
+
+    Sort order
+    ----------
+    1. Architecture      : Tagalog BERT first, Tagalog DistilBERT second
+    2. HF% (descending)  : HF100 → HF75 → HF50 → HF25 → HF0
+    3. Condition pair    : CondA vs CondB → CondA vs CondC → CondB vs CondC
+    """
+    df = total_df.copy()
+
+    def _tag(mk):
+        ml = mk.lower()
+        for ck, hr in CONDITIONS.items():
+            if hr.lower() in ml:
+                return ck
+        return None
+
+    df['_cond']     = df['model_key'].apply(_tag)
+    df['_arch']     = df['model_key'].apply(extract_architecture)
+    df['_hf_label'] = df['model_key'].apply(extract_hf_label)
+
+    cond_keys = list(CONDITIONS.keys())
+    rows      = []
+
+    for (arch, hf_label), grp in df.groupby(['_arch', '_hf_label']):
+        for ci in range(len(cond_keys)):
+            for cj in range(ci + 1, len(cond_keys)):
+                ck_i, ck_j = cond_keys[ci], cond_keys[cj]
+
+                r_i = grp[grp['_cond'] == ck_i].sort_values('sample_index')
+                r_j = grp[grp['_cond'] == ck_j].sort_values('sample_index')
+
+                if r_i.empty or r_j.empty:
+                    continue
+
+                pval = _run_mcnemar_pair(r_i, r_j)
+                if pval is None:
+                    continue
+
+                short_i = CONDITION_SHORT[ck_i]
+                short_j = CONDITION_SHORT[ck_j]
+
+                rows.append({
+                    "Architecture":  arch,
+                    "Comparison":    f"{hf_label} [{short_i}] vs [{short_j}]",
+                    "p-value":       round(pval, 4),
+                    # Numeric sort keys (dropped before returning)
+                    "_arch_order":   _arch_sort_val(arch),
+                    "_hf_pct":       -extract_hf_pct(hf_label),  # descending
+                    "_cond_left":    CONDITION_ORDER.get(short_i, 99),
+                    "_cond_right":   CONDITION_ORDER.get(short_j, 99),
+                })
+
+    out = _apply_bh(pd.DataFrame(rows))
+    if out.empty:
+        return out
+
+    out = (out
+           .sort_values(["_arch_order", "_hf_pct", "_cond_left", "_cond_right"])
+           .drop(columns=["_arch_order", "_hf_pct", "_cond_left", "_cond_right"])
+           .reset_index(drop=True))
+    return out
+
+# =============================================================================
+# 6. CHAMPION (POST-HOC) MCNEMAR
+# =============================================================================
+
+def run_champion_mcnemar(total_df: pd.DataFrame, top_n: int = 3) -> pd.DataFrame:
+    """
+    Post-hoc: within each (condition x architecture), rank models by accuracy,
+    take top N, run all pairwise McNemar tests among them.
+
+    BH correction is applied globally across all pairs in the full table.
+
+    Sort order
+    ----------
+    1. Condition    : CondA → CondB → CondC
+    2. Architecture : Tagalog BERT first, Tagalog DistilBERT second
+    3. Accuracy of left model  : descending  (best champion first)
+    4. Accuracy of right model : descending
+    """
+    rows = []
+
+    for cond_key, hr_string in CONDITIONS.items():
+        cond_df = total_df[
+            total_df['model_key'].str.contains(hr_string, case=False)
+        ]
+
+        for arch in ['Tagalog BERT', 'Tagalog DistilBERT']:
+            arch_df = cond_df[
+                cond_df['model_key'].apply(extract_architecture) == arch
+            ]
+            if arch_df.empty:
+                continue
+
+            # Rank by accuracy
+            model_acc = {
+                mk: accuracy_score(grp['true_int'], grp['pred_int'])
+                for mk, grp in arch_df.groupby('model_key')
+            }
+            top_models = sorted(model_acc, key=model_acc.get, reverse=True)[:top_n]
+
+            if len(top_models) < 2:
+                continue
+
+            for i in range(len(top_models)):
+                for j in range(i + 1, len(top_models)):
+                    m1, m2 = top_models[i], top_models[j]   # m1 always higher acc
+
+                    res_1 = arch_df[arch_df['model_key'] == m1].sort_values('sample_index')
+                    res_2 = arch_df[arch_df['model_key'] == m2].sort_values('sample_index')
+
+                    pval = _run_mcnemar_pair(res_1, res_2)
+                    if pval is None:
+                        continue
+
+                    acc1 = model_acc[m1]
+                    acc2 = model_acc[m2]
+                    lbl1 = f"{extract_hf_label(m1)} (Acc={acc1:.4f})"
+                    lbl2 = f"{extract_hf_label(m2)} (Acc={acc2:.4f})"
+
+                    rows.append({
+                        "Condition":    CONDITION_SHORT[cond_key],
+                        "Architecture": arch,
+                        "Comparison":   f"{lbl1} vs {lbl2}",
+                        "p-value":      round(pval, 4),
+                        # Numeric sort keys (dropped before returning)
+                        "_cond_order":  CONDITION_ORDER.get(CONDITION_SHORT[cond_key], 99),
+                        "_arch_order":  _arch_sort_val(arch),
+                        "_acc_left":    -acc1,   # negative → descending
+                        "_acc_right":   -acc2,
+                    })
+
+    out = _apply_bh(pd.DataFrame(rows))
+    if out.empty:
+        return out
+
+    out = (out
+           .sort_values(["_cond_order", "_arch_order", "_acc_left", "_acc_right"])
+           .drop(columns=["_cond_order", "_arch_order", "_acc_left", "_acc_right"])
+           .reset_index(drop=True))
+    return out
+
+# =============================================================================
+# 7. VISUALIZATIONS
 # =============================================================================
 
 def generate_thesis_graphics(
@@ -226,260 +411,200 @@ def generate_thesis_graphics(
     cond_key: str,
     out_dir: str,
 ):
-    """
-    Generates publication-quality figures.
-
-    Heatmap improvements
-    --------------------
-    * vmin / vmax are derived from the actual data range so the full
-      RdYlGn spectrum is used rather than being anchored at an arbitrary
-      0.85 centre — every shade of the palette carries meaning.
-    * A descriptive colorbar label is included.
-    * Minor grid lines are suppressed; cell borders are kept thin.
-
-    Bar chart improvements
-    ----------------------
-    * Colour is normalised over the same [vmin, vmax] window as the
-      heatmap so the two figures are visually consistent.
-    * A shared colorbar legend is attached to the bar chart.
-    * Axis labels and annotation font sizes are harmonised.
-    """
     sns.set_theme(style="white")
-
     cond_title = CONDITION_LABELS.get(cond_key, cond_key)
 
-    # ------------------------------------------------------------------ #
-    # Shared colour scale — computed once and reused in both figures       #
-    # ------------------------------------------------------------------ #
     acc_cols = [f"{sc} Accuracy" for sc in SUBCLASSES]
     h_data   = subclass_perf_df.set_index("Model Identifier")[acc_cols].copy()
     h_data.columns = [c.replace(" Accuracy", "") for c in h_data.columns]
 
-    all_acc_vals = pd.concat(
-        [h_data.stack().reset_index(drop=True),
-         overall_perf_df["Accuracy"]]
+    all_vals = pd.concat(
+        [h_data.stack().reset_index(drop=True), overall_perf_df["Accuracy"]]
     )
-    v_min = max(0.0, float(all_acc_vals.min()) - 0.02)   # small breathing room
-    v_max = min(1.0, float(all_acc_vals.max()) + 0.02)
+    v_min = max(0.0, float(all_vals.min()) - 0.02)
+    v_max = min(1.0, float(all_vals.max()) + 0.02)
+    cmap  = "RdYlGn"
+    n_m   = len(h_data)
 
-    cmap = "RdYlGn"
-
-    # ------------------------------------------------------------------ #
-    # A. Subclass Accuracy Heatmap                                         #
-    # ------------------------------------------------------------------ #
-    n_models = len(h_data)
-    fig_h    = max(5, n_models * 0.55 + 2.5)
-    fig, ax  = plt.subplots(figsize=(13, fig_h))
-
+    # ── Subclass Heatmap ──────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(13, max(5, n_m * 0.55 + 2.5)))
     sns.heatmap(
-        h_data,
-        ax=ax,
-        annot=True,
-        cmap=cmap,
-        fmt=".4f",
-        vmin=v_min,
-        vmax=v_max,
-        linewidths=0.6,
-        linecolor="#cccccc",
+        h_data, ax=ax, annot=True, cmap=cmap, fmt=".4f",
+        vmin=v_min, vmax=v_max,
+        linewidths=0.6, linecolor="#cccccc",
         annot_kws={"size": 10, "fontname": "Arial"},
         cbar_kws={"label": "Per-Class Accuracy", "shrink": 0.75, "pad": 0.02},
     )
-
-    ax.set_title(
-        f"Subclass Accuracy by Model: {cond_title}",
-        fontsize=15,
-        fontweight="bold",
-        pad=16,
-    )
+    ax.set_title(f"Subclass Accuracy by Model: {cond_title}",
+                 fontsize=15, fontweight="bold", pad=16)
     ax.set_xlabel("News Subclass", fontsize=12, fontweight="bold", labelpad=8)
-    ax.set_ylabel("Model", fontsize=12, fontweight="bold", labelpad=8)
+    ax.set_ylabel("Model",         fontsize=12, fontweight="bold", labelpad=8)
     ax.tick_params(axis="x", labelsize=11, rotation=0)
     ax.tick_params(axis="y", labelsize=9,  rotation=0)
-
-    # Colorbar font
     cbar = ax.collections[0].colorbar
     cbar.ax.tick_params(labelsize=9)
     cbar.set_label("Per-Class Accuracy", fontsize=10, fontweight="bold")
-
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, f"{cond_key}_Heatmap.png"), bbox_inches="tight")
     plt.close()
 
-    # ------------------------------------------------------------------ #
-    # B. Overall Accuracy Horizontal Bar Chart                             #
-    # ------------------------------------------------------------------ #
-    bar_data = overall_perf_df.iloc[::-1].copy()   # invert for top-to-bottom reading
-
+    # ── Overall Accuracy Bar Chart ────────────────────────────────────────────
+    bar_data  = overall_perf_df.iloc[::-1].copy()
     norm      = plt.Normalize(vmin=v_min, vmax=v_max)
     scalar_cm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    bar_colors = [scalar_cm.to_rgba(v) for v in bar_data["Accuracy"]]
+    colors    = [scalar_cm.to_rgba(v) for v in bar_data["Accuracy"]]
 
-    fig, ax = plt.subplots(figsize=(12, max(5, n_models * 0.6 + 2.5)))
-
+    fig, ax = plt.subplots(figsize=(12, max(5, n_m * 0.6 + 2.5)))
     bars = ax.barh(
-        bar_data["Model Identifier"],
-        bar_data["Accuracy"],
-        color=bar_colors,
-        edgecolor="#333333",
-        linewidth=0.6,
-        height=0.65,
+        bar_data["Model Identifier"], bar_data["Accuracy"],
+        color=colors, edgecolor="#333333", linewidth=0.6, height=0.65,
     )
-
-    # Value annotations
     for bar in bars:
-        width = bar.get_width()
-        ax.text(
-            width + 0.008,
-            bar.get_y() + bar.get_height() / 2,
-            f"{width:.4f}",
-            va="center",
-            ha="left",
-            fontsize=9,
-            fontname="Arial",
-            fontweight="bold",
-            color="#222222",
-        )
+        w = bar.get_width()
+        ax.text(w + 0.008, bar.get_y() + bar.get_height() / 2,
+                f"{w:.4f}", va="center", ha="left",
+                fontsize=9, fontname="Arial", fontweight="bold", color="#222222")
 
-    # Colorbar legend (matches heatmap scale)
     scalar_cm.set_array([])
-    cbar = fig.colorbar(scalar_cm, ax=ax, orientation="vertical",
-                        shrink=0.6, pad=0.02)
+    cbar = fig.colorbar(scalar_cm, ax=ax, orientation="vertical", shrink=0.6, pad=0.02)
     cbar.set_label("Accuracy", fontsize=10, fontweight="bold")
     cbar.ax.tick_params(labelsize=9)
 
     ax.set_xlabel("Overall Binary Accuracy", fontsize=12, fontweight="bold", labelpad=8)
-    ax.set_title(
-        f"Overall Model Accuracy: {cond_title}",
-        fontsize=15,
-        fontweight="bold",
-        pad=16,
-    )
+    ax.set_title(f"Overall Model Accuracy: {cond_title}",
+                 fontsize=15, fontweight="bold", pad=16)
     ax.set_xlim(0, 1.15)
     ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
     ax.tick_params(axis="y", labelsize=8.5)
     ax.tick_params(axis="x", labelsize=10)
     ax.spines[["top", "right"]].set_visible(False)
-
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, f"{cond_key}_Accuracy_Bars.png"), bbox_inches="tight")
     plt.close()
 
 # =============================================================================
-# 5. JOURNAL-STYLE EXCEL STYLING
+# 8. EXCEL STYLING
 # =============================================================================
 
-def apply_journal_table_styling(excel_writer, sheet_id, dataframe):
-    """Applies minimalist APA-style horizontal formatting."""
+def apply_journal_table_styling(writer, sheet_id, df):
+    """Minimalist APA-style: bold header with top+bottom rule, bottom rule on last row."""
     from openpyxl.styles import Font, Alignment, Border, Side
-    worksheet = excel_writer.sheets[sheet_id]
-    
-    black_thin_side = Side(style='thin', color="000000")
-    header_border_style = Border(top=black_thin_side, bottom=black_thin_side)
-    bottom_border_style = Border(bottom=black_thin_side)
 
-    for c_idx in range(1, len(dataframe.columns) + 1):
-        cell_obj = worksheet.cell(row=1, column=c_idx)
-        cell_obj.font = Font(bold=True, name="Arial", size=11)
-        cell_obj.border = header_border_style
-        cell_obj.alignment = Alignment(horizontal="center")
+    ws         = writer.sheets[sheet_id]
+    thin       = Side(style='thin', color="000000")
+    hdr_border = Border(top=thin, bottom=thin)
+    bot_border = Border(bottom=thin)
+    n_cols     = len(df.columns)
+    n_rows     = ws.max_row
 
-    total_rows = worksheet.max_row
-    for r_idx in range(2, total_rows + 1):
-        for c_idx in range(1, len(dataframe.columns) + 1):
-            cell_obj = worksheet.cell(row=r_idx, column=c_idx)
-            cell_obj.font = Font(name="Arial", size=11)
-            cell_obj.alignment = Alignment(horizontal="center")
-            if r_idx == total_rows:
-                cell_obj.border = bottom_border_style
-            else:
-                cell_obj.border = Border()
+    for c in range(1, n_cols + 1):
+        cell           = ws.cell(row=1, column=c)
+        cell.font      = Font(bold=True, name="Arial", size=11)
+        cell.border    = hdr_border
+        cell.alignment = Alignment(horizontal="center")
+
+    for r in range(2, n_rows + 1):
+        for c in range(1, n_cols + 1):
+            cell           = ws.cell(row=r, column=c)
+            cell.font      = Font(name="Arial", size=11)
+            cell.alignment = Alignment(horizontal="center")
+            cell.border    = bot_border if r == n_rows else Border()
 
 # =============================================================================
-# 6. MAIN PIPELINE
+# 9. MAIN PIPELINE
 # =============================================================================
 
 def main():
-    arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument("--input_dir", required=True)
-    arg_parser.add_argument("--output_dir", required=True)
-    args = arg_parser.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_dir",  required=True)
+    parser.add_argument("--output_dir", required=True)
+    args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    excel_report_path = os.path.join(args.output_dir, "Thesis_Results_Final_Comprehensive.xlsx")
 
-    # A. Aggregate Data
-    print("Gathering master results from experimental directories...")
-    master_pred_list = []
-    for item in os.listdir(args.input_dir):
-        potential_path = os.path.join(args.input_dir, item, "master_results.xlsx")
-        if os.path.exists(potential_path):
-            pred_df = pd.read_excel(potential_path, sheet_name="Predictions", dtype=str)
-            master_pred_list.append(pred_df)
-    
-    if not master_pred_list:
-        print("Error: No data found."); return
-        
-    total_data_df = pd.concat(master_pred_list, ignore_index=True)
-    total_data_df['true_int'] = total_data_df['true_label'].map(LABEL_STR_TO_INT)
-    total_data_df['pred_int'] = total_data_df['pred_label'].map(LABEL_STR_TO_INT)
+    main_excel = os.path.join(args.output_dir, "Thesis_Results_Final_Comprehensive.xlsx")
 
-    all_thesis_sheets = {}
+    # ── A. Collect all master_results.xlsx recursively ───────────────────────
+    print("Gathering master results...")
+    frames = []
+    for root, _, files in os.walk(args.input_dir):
+        if "master_results.xlsx" in files and os.path.basename(root) == "results":
+            path = os.path.join(root, "master_results.xlsx")
+            print(f"  Found: {path}")
+            frames.append(pd.read_excel(path, sheet_name="Predictions", dtype=str))
 
-    # B. Generate Results by Condition
+    if not frames:
+        print("Error: No data found.")
+        return
+
+    total_df             = pd.concat(frames, ignore_index=True)
+    total_df['true_int'] = total_df['true_label'].map(LABEL_STR_TO_INT)
+    total_df['pred_int'] = total_df['pred_label'].map(LABEL_STR_TO_INT)
+
+    main_sheets = {}
+
+    # ── B. Per-condition metrics + within-condition McNemar ───────────────────
     for cond_key, hr_string in CONDITIONS.items():
-        print(f"Processing {cond_key} ({CONDITION_LABELS[cond_key]})...")
-        condition_subset = total_data_df[total_data_df['model_key'].str.contains(hr_string, case=False)]
-        
-        if condition_subset.empty:
+        print(f"\nProcessing {cond_key} ({CONDITION_LABELS[cond_key]})...")
+        cond_df = total_df[
+            total_df['model_key'].str.contains(hr_string, case=False)
+        ]
+        if cond_df.empty:
             continue
-            
-        overall_rows = []
-        subclass_rows = []
-        
-        for (m_key, arch_raw), group in condition_subset.groupby(["model_key", "arch"]):
-            y_t, y_p = group['true_int'].values, group['pred_int'].values
-            
-            prec_val, recall_val, f1_val, _ = precision_recall_fscore_support(
-                y_t, y_p, average='binary', zero_division=0
+
+        overall_rows, subclass_rows = [], []
+
+        for (m_key, arch_raw), grp in cond_df.groupby(["model_key", "arch"]):
+            yt, yp = grp['true_int'].values, grp['pred_int'].values
+            prec, rec, f1, _ = precision_recall_fscore_support(
+                yt, yp, average='binary', zero_division=0
             )
             overall_rows.append({
                 "Model Identifier": m_key,
-                "Architecture": arch_raw,
-                "Accuracy":  round(accuracy_score(y_t, y_p), 4),
-                "Precision": round(prec_val,   4),
-                "Recall":    round(recall_val, 4),
-                "F1-Score":  round(f1_val,     4),
+                "Architecture":     extract_architecture(m_key),
+                "Accuracy":         round(accuracy_score(yt, yp), 4),
+                "Precision":        round(prec, 4),
+                "Recall":           round(rec,  4),
+                "F1-Score":         round(f1,   4),
             })
-            
-            sc_meta = {"Model Identifier": m_key, "Architecture": arch_raw}
-            for sc_name in SUBCLASSES:
-                sc_group = group[group['subclass'] == sc_name]
-                if not sc_group.empty:
-                    sc_meta[f"{sc_name} Accuracy"] = round(
-                        accuracy_score(sc_group['true_int'], sc_group['pred_int']), 4
-                    )
-                else:
-                    sc_meta[f"{sc_name} Accuracy"] = 0.0
-            subclass_rows.append(sc_meta)
+            sc_row = {
+                "Model Identifier": m_key,
+                "Architecture":     extract_architecture(m_key),
+            }
+            for sc in SUBCLASSES:
+                sg = grp[grp['subclass'] == sc]
+                sc_row[f"{sc} Accuracy"] = (
+                    round(accuracy_score(sg['true_int'], sg['pred_int']), 4)
+                    if not sg.empty else 0.0
+                )
+            subclass_rows.append(sc_row)
 
-        overall_perf_df  = standardize_and_sort_thesis_data(pd.DataFrame(overall_rows))
-        subclass_perf_df = standardize_and_sort_thesis_data(pd.DataFrame(subclass_rows))
-        significance_df  = run_mcnemar_significance_test(condition_subset)
+        overall_df  = standardize_and_sort_thesis_data(pd.DataFrame(overall_rows))
+        subclass_df = standardize_and_sort_thesis_data(pd.DataFrame(subclass_rows))
+        within_df   = run_within_condition_mcnemar(cond_df)
 
-        all_thesis_sheets[f"{cond_key}_Overall"]  = overall_perf_df
-        all_thesis_sheets[f"{cond_key}_Subclass"] = subclass_perf_df
-        all_thesis_sheets[f"{cond_key}_Stats"]    = significance_df
-        
-        generate_thesis_graphics(overall_perf_df, subclass_perf_df, cond_key, args.output_dir)
+        main_sheets[f"{cond_key}_Overall"]  = overall_df
+        main_sheets[f"{cond_key}_Subclass"] = subclass_df
+        main_sheets[f"{cond_key}_Stats"]    = within_df
 
-    # C. Final Excel Export
-    print(f"\nWriting reports to {excel_report_path}...")
-    with pd.ExcelWriter(excel_report_path, engine='openpyxl') as writer:
-        for sheet_name, df_content in all_thesis_sheets.items():
-            df_content.to_excel(writer, sheet_name=sheet_name, index=False)
-            apply_journal_table_styling(writer, sheet_name, df_content)
+        generate_thesis_graphics(overall_df, subclass_df, cond_key, args.output_dir)
 
-    print("\n[COMPLETE] All academic results, stats, and synchronized graphics generated.")
+    # ── C. Cross-condition McNemar ────────────────────────────────────────────
+    print("\nRunning cross-condition McNemar...")
+    main_sheets["CrossCondition_Stats"] = run_cross_condition_mcnemar(total_df)
+
+    # ── D. Champion post-hoc McNemar ─────────────────────────────────────────
+    print("\nRunning champion McNemar (top 3 per condition x architecture)...")
+    main_sheets["Champion_Comparisons"] = run_champion_mcnemar(total_df, top_n=3)
+
+    # ── E. Write single workbook (all sheets) ─────────────────────────────────
+    print(f"\nWriting {main_excel}...")
+    with pd.ExcelWriter(main_excel, engine='openpyxl') as writer:
+        for sheet_name, df in main_sheets.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            apply_journal_table_styling(writer, sheet_name, df)
+
+    print("\n[COMPLETE] All results, statistics, and graphics generated.")
 
 
 if __name__ == "__main__":
