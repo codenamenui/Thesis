@@ -129,7 +129,7 @@ def apply_truncation(combined: pd.DataFrame,
     store the original text in `original_article`.
     """
     if not isinstance(trunc_cfg, dict):
-         raise TypeError("Config error: 'truncation' must be a dictionary with a 'model' key (e.g., {\"model\": \"...\"}).")
+         raise TypeError("Config error: 'truncation' must be a dictionary with a 'model' key.")
 
     model_name = trunc_cfg["model"]
     df = combined.copy()
@@ -140,9 +140,7 @@ def apply_truncation(combined: pd.DataFrame,
     df["_ids"]        = all_ids
     df["token_count"] = [len(ids) for ids in all_ids]
 
-    # Determine cap — priority: explicit override > config key > error
-    # (auto-cap from train rows is no longer supported here; use
-    #  compute_global_cap() before the loop instead)
+    # Determine cap
     if cap_override is not None:
         cap      = cap_override
         cap_desc = cap_desc_override or f"global cap={cap}"
@@ -174,9 +172,8 @@ def apply_truncation(combined: pd.DataFrame,
 
 def tokenize_frames(frames: dict[str, pd.DataFrame], model_name: str) -> dict[str, pd.DataFrame]:
     """
-    Tokenize every raw frame's `article` column and attach a `token_count`
-    column.  Used to compute original-dataset token statistics before sampling.
-    Returns a new dict of frames with `token_count` added.
+    Tokenize every raw frame's `article` column and attach token_count
+    and _ids columns. Used for original and truncated statistics.
     """
     result = {}
     for nt, df in frames.items():
@@ -185,6 +182,7 @@ def tokenize_frames(frames: dict[str, pd.DataFrame], model_name: str) -> dict[st
         all_ids = _tokenize_texts(texts, model_name)
         df2 = df.copy()
         df2["token_count"] = [len(ids) for ids in all_ids]
+        df2["_ids"]        = all_ids
         result[nt] = df2
     return result
 
@@ -201,6 +199,40 @@ def compute_original_token_stats(frames: dict[str, pd.DataFrame]) -> dict:
 
     for nt, df in frames.items():
         tc = df["token_count"].dropna().astype(int)
+        all_counts.extend(tc.tolist())
+        stats[nt] = {
+            "count":  int(len(tc)),
+            "avg":    float(tc.mean()),
+            "median": float(tc.median()),
+            "std":    float(tc.std()),
+            "min":    int(tc.min()),
+            "max":    int(tc.max()),
+        }
+
+    tc_all = pd.Series(all_counts)
+    stats["overall"] = {
+        "count":  int(len(tc_all)),
+        "avg":    float(tc_all.mean()),
+        "median": float(tc_all.median()),
+        "std":    float(tc_all.std()),
+        "min":    int(tc_all.min()),
+        "max":    int(tc_all.max()),
+    }
+    return stats
+
+
+def compute_truncated_token_stats(frames: dict[str, pd.DataFrame], cap: int) -> dict:
+    """
+    Apply truncation to all rows using the specified cap (via _ids column)
+    and return token count statistics for the truncated whole dataset.
+    """
+    stats: dict[str, dict] = {}
+    all_counts: list[int] = []
+
+    for nt, df in frames.items():
+        ids_series = df["_ids"]
+        truncated_counts = ids_series.apply(lambda ids: len(_truncate_ids(ids, cap)))
+        tc = truncated_counts.astype(int)
         all_counts.extend(tc.tolist())
         stats[nt] = {
             "count":  int(len(tc)),
@@ -379,6 +411,9 @@ def write_summary_sheet(
     n_val,
     n_test,
     original_token_stats: dict | None = None,
+    truncated_token_stats: dict | None = None,
+    truncation_cap: int | None = None,
+    truncation_desc: str | None = None,
 ):
     splits = ["train", "val", "test"]
     topics = sorted(topic_ratios.keys())
@@ -448,11 +483,10 @@ def write_summary_sheet(
     current_row += 1
 
     # §5 TOKEN STATISTICS — ORIGINAL DATASET
-    # Only written when truncation was enabled (i.e. we have token counts).
     if original_token_stats:
         stat_news_types = [nt for nt in news_types if nt in original_token_stats]
         n_stat_cols = 6  # count | avg | median | std | min | max
-        total_cols  = 1 + n_stat_cols  # news_type + 6 stats
+        total_cols  = 1 + n_stat_cols
 
         _summary_cell(ws, current_row, 1, "TOKEN STATISTICS — ORIGINAL DATASET (before sampling)",
                       bold=True, fill=SUMMARY_HEADER_FILL)
@@ -478,7 +512,6 @@ def write_summary_sheet(
             _summary_cell(ws, current_row, 7, s["max"],             fill=nt_fill)
             current_row += 1
 
-        # Overall row
         if "overall" in original_token_stats:
             s = original_token_stats["overall"]
             _summary_cell(ws, current_row, 1, "OVERALL", bold=True, fill=OVERALL_ROW_FILL, align="left")
@@ -492,11 +525,54 @@ def write_summary_sheet(
 
         current_row += 1
 
-    # §6 TOKEN STATISTICS — PER CONDITION (MEAN ± per news_type)
-    # Columns: Sheet | Split | <NT1> avg | <NT2> avg | … | Overall avg | Cap | Cap method
-    nt_cols = news_types  # one avg-tokens column per news_type
-    n_fixed = 4           # Sheet | Split | Overall Avg | Cap | Cap Method  →  actually 5
-    total_header_cols = 2 + len(nt_cols) + 3  # Sheet, Split, NTs..., Overall, Cap, Method
+    # §6 TOKEN STATISTICS — AFTER TRUNCATION (whole dataset)
+    if truncated_token_stats:
+        stat_news_types = [nt for nt in news_types if nt in truncated_token_stats]
+        n_stat_cols = 6
+        total_cols  = 1 + n_stat_cols
+
+        cap_str = f"{truncation_cap}" if truncation_cap is not None else "N/A"
+        desc_str = f" ({truncation_desc})" if truncation_desc else ""
+        _summary_cell(ws, current_row, 1,
+                      f"TOKEN STATISTICS — AFTER TRUNCATION (whole dataset, cap = {cap_str}{desc_str})",
+                      bold=True, fill=SUMMARY_HEADER_FILL)
+        ws.merge_cells(start_row=current_row, start_column=1,
+                       end_row=current_row, end_column=total_cols)
+        current_row += 1
+
+        stat_headers = ["News Type", "Count", "Avg Tokens", "Median", "Std Dev", "Min", "Max"]
+        for ci, h in enumerate(stat_headers, 1):
+            _summary_cell(ws, current_row, ci, h, bold=True, fill=SUMMARY_SECTION_FILL)
+        current_row += 1
+
+        for nt in stat_news_types:
+            s = truncated_token_stats[nt]
+            nt_fill = PatternFill("solid", start_color=NEWS_TYPE_COLORS.get(nt, "FFFFFF"))
+            _summary_cell(ws, current_row, 1, nt, bold=True, fill=nt_fill, align="left")
+            _summary_cell(ws, current_row, 2, s["count"],           fill=nt_fill)
+            _summary_cell(ws, current_row, 3, f"{s['avg']:.1f}",    fill=nt_fill)
+            _summary_cell(ws, current_row, 4, f"{s['median']:.1f}", fill=nt_fill)
+            _summary_cell(ws, current_row, 5, f"{s['std']:.1f}",    fill=nt_fill)
+            _summary_cell(ws, current_row, 6, s["min"],             fill=nt_fill)
+            _summary_cell(ws, current_row, 7, s["max"],             fill=nt_fill)
+            current_row += 1
+
+        if "overall" in truncated_token_stats:
+            s = truncated_token_stats["overall"]
+            _summary_cell(ws, current_row, 1, "OVERALL", bold=True, fill=OVERALL_ROW_FILL, align="left")
+            _summary_cell(ws, current_row, 2, s["count"],           fill=OVERALL_ROW_FILL, bold=True)
+            _summary_cell(ws, current_row, 3, f"{s['avg']:.1f}",    fill=OVERALL_ROW_FILL, bold=True)
+            _summary_cell(ws, current_row, 4, f"{s['median']:.1f}", fill=OVERALL_ROW_FILL, bold=True)
+            _summary_cell(ws, current_row, 5, f"{s['std']:.1f}",    fill=OVERALL_ROW_FILL, bold=True)
+            _summary_cell(ws, current_row, 6, s["min"],             fill=OVERALL_ROW_FILL, bold=True)
+            _summary_cell(ws, current_row, 7, s["max"],             fill=OVERALL_ROW_FILL, bold=True)
+            current_row += 1
+
+        current_row += 1
+
+    # §7 TOKEN STATISTICS — PER CONDITION (MEAN ± per news_type)
+    nt_cols = news_types
+    total_header_cols = 2 + len(nt_cols) + 3
 
     _summary_cell(ws, current_row, 1, "TOKEN STATISTICS — PER CONDITION",
                   bold=True, fill=SUMMARY_HEADER_FILL)
@@ -516,7 +592,6 @@ def write_summary_sheet(
             _summary_cell(ws, current_row, 2, split,
                           fill=PatternFill("solid", start_color=SPLIT_COLORS.get(split)))
 
-            # Per-news-type avg tokens for this split
             nt_avgs_this_split = rec.get("token_stats_by_nt", {}).get(split, {})
             overall_avg = rec["token_stats"].get(split, {}).get("avg", "-") if has_token else "-"
 
@@ -560,8 +635,8 @@ def main(config_path):
 
     # ── Tokenize original frames once (when truncation is requested) ──────────
     original_token_stats: dict | None = None
+    truncated_token_stats: dict | None = None
     tokenized_frames: dict | None     = None
-    # Global cap is computed once here and reused by every condition sheet.
     global_cap: int | None       = None
     global_cap_desc: str | None  = None
 
@@ -571,13 +646,20 @@ def main(config_path):
         original_token_stats = compute_original_token_stats(tokenized_frames)
         print("  Original token statistics computed.")
 
-        # Determine cap once for the whole run
         if "cap" in cfg["truncation"]:
             global_cap      = int(cfg["truncation"]["cap"])
             global_cap_desc = f"fixed cap={global_cap}"
             print(f"  Using fixed truncation cap = {global_cap}")
         else:
             global_cap, global_cap_desc = compute_global_cap(tokenized_frames)
+
+        # Compute truncated stats for the whole dataset (all rows, all types)
+        truncated_token_stats = compute_truncated_token_stats(tokenized_frames, global_cap)
+        print("  Truncated (whole dataset) token statistics computed.")
+
+        # Drop _ids column to free memory
+        for df in tokenized_frames.values():
+            df.drop(columns=["_ids"], inplace=True)
 
     print("Sampling fixed test/val sets...")
     test_parts = [sample_stratified(frames[nt], c, topic_ratios, rng_fixed, used[nt]).assign(split="test") for nt, c in ratios_to_counts(eq_ratio, n_tv).items()]
@@ -602,7 +684,6 @@ def main(config_path):
 
         cap, cap_desc, token_stats, token_stats_by_nt = None, None, {}, {}
         if "truncation" in cfg:
-            # Pass the globally computed cap — identical across all sheets
             combined, cap, cap_desc = apply_truncation(
                 combined, cfg["truncation"],
                 cap_override=global_cap,
@@ -639,6 +720,9 @@ def main(config_path):
         summary_records, news_types, topic_ratios,
         total_samples, n_tr, n_vv, n_tv,
         original_token_stats=original_token_stats,
+        truncated_token_stats=truncated_token_stats,
+        truncation_cap=global_cap,
+        truncation_desc=global_cap_desc,
     )
     wb.save(output_file)
     print(f"✅ Success! Saved to {output_file}")
